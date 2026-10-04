@@ -78,62 +78,33 @@
 # be P&R'd with arachne-pnr and nextpnr, respectively.
 #
 
-{ architecture ? "rv32imc"
+{ 
+  pkgs ? import <nixpkgs> {},
 }:
-
-# TODO FIXME: fix this to a specific version of nixpkgs.
-# ALSO: maybe use cachix to make it easier for contributors(?)
-with import <nixpkgs> {};
-
-let
-  # risc-v toolchain source code. TODO FIXME: this should be replaced with
-  # upstream versions of GCC. in the future we could also include LLVM (the
-  # upstream nixpkgs LLVM expression should be built with it in time)
-  riscv-toolchain-ver = "8.2.0";
-  riscv-src = pkgs.fetchFromGitHub {
-    owner  = "riscv";
-    repo   = "riscv-gnu-toolchain";
-    rev    = "c3ad5556197e374c25bc475ffc9285b831f869f8";
-    sha256 = "1j9y3ai42xzzph9rm116sxfzhdlrjrk4z0v4yrk197j72isqyxbc";
-    fetchSubmodules = true;
-  };
-
-  # given an architecture like 'rv32i', this will generate the given
-  # toolchain derivation based on the above source code.
-  make-riscv-toolchain = arch:
-    stdenv.mkDerivation rec {
-      name    = "riscv-${arch}-toolchain-${version}";
-      version = "${riscv-toolchain-ver}-${builtins.substring 0 7 src.rev}";
-      src     = riscv-src;
-
-      configureFlags   = [ "--with-arch=${arch}" ];
-      installPhase     = ":"; # 'make' installs on its own
-      hardeningDisable = [ "all" ];
-      enableParallelBuilding = true;
-
-      # Stripping/fixups break the resulting libgcc.a archives, somehow.
-      # Maybe something in stdenv that does this...
-      dontStrip = true;
-      dontFixup = true;
-
-      nativeBuildInputs = with pkgs; [ curl gawk texinfo bison flex gperf ];
-      buildInputs = with pkgs; [ libmpc mpfr gmp expat ];
+let 
+  cross = import <nixpkgs> {
+    crossSystem = {
+      config = "riscv32-unknown-none-elf";
+      gcc = {
+        arch = "rv32imc";
+      };
+      libc = "newlib";
     };
-
-  riscv-toolchain = make-riscv-toolchain architecture;
-
-  # These are all the packages that will be available inside the nix-shell
-  # environment.
-  buildInputs = with pkgs;
-    # these are generally useful packages for tests, verification, synthesis
-    # and deployment, etc
-    [ python3 gcc
-      yosys symbiyosys nextpnr arachne-pnr icestorm
+  };
+in
+pkgs.mkShell rec {
+  name = "picorv32-shell";
+  
+  # These inputs are native, as they are to be used on the host!
+  buildInputs = with pkgs; [ python3 gcc
+      yosys sby nextpnr arachne-pnr icestorm
       z3 boolector yices
-      verilog verilator
-      # also include the RISC-V toolchain
-      riscv-toolchain
-    ];
+      iverilog verilator
+  ] ++ [ cross.buildPackages.gcc ];
 
-# Export a usable shell environment
-in runCommand "picorv32-shell" { inherit buildInputs; } ""
+  shellHook = ''
+    # Add a prefix 'esp-rs' to the shell prompt
+    export PS1="(picorv32)$PS1"
+    export TOOLCHAIN_PREFIX=riscv32-unknown-none-elf-
+  '';
+}
